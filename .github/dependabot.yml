@@ -1,0 +1,37 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+    # Menores y parches van juntos en una sola PR: cinco PRs sueltas a la
+    # semana, cada una con su despliegue de vista previa, es mas ruido que
+    # seguridad.
+    groups:
+      menores-y-parches:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+    ignore:
+      # Las versiones mayores de estas dos rompen `npm run lint`, asi que sus
+      # PRs nacen sin poder fusionarse. Comprobado en local:
+      #   · typescript 7.0.2 → "typescript-eslint does not support TS 7.0"
+      #   · eslint 10.8.1    → la regla react/display-name usa una API que ya
+      #                        no existe: contextOrFilename.getFilename
+      # Las dos vienen atadas a eslint-config-next. Cuando Next publique una
+      # version que las soporte, se quitan estas dos entradas.
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
+      - dependency-name: eslint
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      acciones:
+        patterns: ["*"]

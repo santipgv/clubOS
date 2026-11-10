@@ -1,0 +1,809 @@
+// clubOS — esquema de datos
+// Ver docs/ESPECIFICACIONES.md §4
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------- enums
+
+/// Que puede hacer una persona dentro de la aplicacion.
+enum Role {
+  MEMBER
+  /// Socio que ademas gestiona uno o varios deportes (ver managedSports).
+  COLLABORATOR
+  STAFF
+  ADMIN
+}
+
+/// Que es esa persona para el club. Es independiente del rol: un socio puede
+/// gestionar el padel, y un empleado no tiene por que ser socio.
+enum Relationship {
+  SOCIO
+  EMPLEADO
+  COLABORADOR
+  INVITADO
+}
+
+enum UserStatus {
+  PENDING
+  ACTIVE
+  /// Impago o sancion. Reversible, decide la junta.
+  SUSPENDED
+  /// Baja voluntaria o por impago definitivo. No se borra nada: el historico
+  /// de reservas y cuotas se conserva por obligacion contable.
+  BAJA
+  REJECTED
+}
+
+/// Categoria de socio. Determina la cuota y la tarifa de pista.
+enum MemberType {
+  NUMERARIO
+  FAMILIAR
+  JUVENIL
+  INFANTIL
+  ABONADO
+  HONORARIO
+  INVITADO
+}
+
+enum FeeStatus {
+  PENDING
+  PAID
+  OVERDUE
+  WAIVED
+  REFUNDED
+}
+
+enum PostCategory {
+  NOTICIA
+  EVENTO
+  AVISO
+}
+
+enum TournamentStatus {
+  /// Se esta preparando, el socio todavia no lo ve.
+  DRAFT
+  /// Inscripciones abiertas.
+  OPEN
+  /// Plazo cerrado o plazas agotadas.
+  CLOSED
+  FINISHED
+  CANCELLED
+}
+
+enum RegistrationStatus {
+  REGISTERED
+  WAITLIST
+  CANCELLED
+}
+
+enum TournamentSport {
+  PADEL
+  TENIS
+  CROQUET
+  GOLF
+}
+
+enum Sport {
+  PADEL
+  TENIS
+  CROQUET
+}
+
+enum BookingStatus {
+  PENDING_PAYMENT
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+  NO_SHOW
+}
+
+enum PaymentStatus {
+  NOT_REQUIRED
+  PENDING
+  PAID
+  REFUNDED
+}
+
+enum PaymentMethod {
+  CASH
+  TRANSFER
+  CARD_STRIPE
+  CREDIT
+  MANUAL
+  /// Con el saldo del monedero del socio.
+  WALLET
+}
+
+/// Movimientos del monedero.
+enum WalletMovementType {
+  /// Recarga: entra dinero.
+  TOPUP
+  /// Pago de una reserva con saldo: sale dinero.
+  BOOKING_PAYMENT
+  /// Devolucion de una reserva cancelada: entra dinero.
+  REFUND
+}
+
+/// Tratamiento fiscal congelado en cada reserva. Ver §9 de las especificaciones:
+/// el club factura directamente, por lo que decide su propio IVA.
+enum TaxTreatment {
+  EXEMPT_SPORT // art. 20.Uno.13 LIVA — servicio deportivo a socio persona fisica
+  STANDARD_21
+  REDUCED_10
+  NOT_SUBJECT
+}
+
+/// Tipo de recorrido de golf. El documento del club (§"Modulo: Golf") los
+/// distingue porque no todos se reservan igual: en el campo grande se reserva
+/// una salida, y en el putting green no hay salidas que repartir.
+enum GolfCourseKind {
+  RECORRIDO
+  PRACTICAS
+  PITCH_AND_PUTT
+  PUTTING_GREEN
+}
+
+enum GolfInvitationPayment {
+  SEPARATE
+  HOST
+}
+
+enum GolfBookingStatus {
+  INVITED
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+  NO_SHOW
+}
+
+enum BlockType {
+  MAINTENANCE
+  TOURNAMENT
+  CLASS
+  CLOSURE
+  EVENT
+}
+
+// ---------------------------------------------------------------- socios
+
+model User {
+  id                String       @id @default(uuid(7))
+  email             String       @unique
+  emailVerifiedAt   DateTime?
+  /// Hash Argon2id. Nulo mientras el socio no haya elegido contrasena: en ese
+  /// caso solo puede entrar con enlace magico.
+  passwordHash      String?
+  passwordUpdatedAt DateTime?
+  firstName         String
+  lastName          String
+  phone             String?
+  birthDate         DateTime?    @db.Date
+  role              Role         @default(MEMBER)
+  status            UserStatus   @default(PENDING)
+  relationship      Relationship @default(SOCIO)
+  memberNumber      String?      @unique
+  memberType        MemberType   @default(NUMERARIO)
+
+  /// Deportes que gestiona un COLLABORATOR. Vacio para el resto de roles.
+  managedSports Sport[] @default([])
+
+  // --- documentacion y domicilio ---
+  nationalId  String?
+  addressLine String?
+  postalCode  String?
+  city        String?
+  province    String?
+  altPhone    String?
+
+  // --- domiciliacion de la cuota ---
+  /// IBAN cifrado con AES-256-GCM. Ver src/lib/crypto.ts: nunca en claro.
+  ibanEncrypted String?
+  /// Ultimos 4 digitos, para poder mostrarlo sin descifrar nada.
+  ibanLast4     String?
+  accountHolder String?
+
+  /// Consentimiento para la cadena de correos del club. Por defecto no: el
+  /// RGPD exige que el socio lo active, no que tenga que desactivarlo.
+  newsletterOptIn      Boolean   @default(false)
+  newsletterUpdatedAt  DateTime?
+  /// Token de baja para el enlace del pie de los correos.
+  newsletterUnsubToken String?   @unique
+
+  /// Saldo del monedero, en centimos. Nunca negativo: lo garantiza un CHECK en
+  /// Postgres, no solo este codigo. Su historico esta en WalletMovement.
+  walletBalanceCents Int @default(0)
+
+  /// Notas internas de la junta. Nunca visibles para el socio.
+  notes           String?
+  acceptedTermsAt DateTime?
+  /// Fecha de alta como socio. Distinta de createdAt: un socio de 1998 puede
+  /// tener su cuenta creada ayer.
+  joinedAt        DateTime?
+  approvedAt      DateTime?
+  approvedById    String?
+  /// Quien creo la ficha, cuando la da de alta secretaria.
+  createdById     String?
+  /// Baja: se conserva todo el historico.
+  leftAt          DateTime?
+  leaveReason     String?
+  lastLoginAt     DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  sessions              Session[]
+  bookings              Booking[]                @relation("BookingOwner")
+  bookingsCreated       Booking[]                @relation("BookingCreator")
+  cancelledBookings     Booking[]                @relation("BookingCanceller")
+  blocksCreated         CourtBlock[]
+  golfPaymentsTaken     GolfPayment[]
+  paymentsTaken         Payment[]
+  auditLogs             AuditLog[]
+  fees                  MembershipFee[]          @relation("FeeOwner")
+  feesRegistered        MembershipFee[]          @relation("FeeRegistrar")
+  posts                 Post[]
+  registrations         TournamentRegistration[] @relation("RegistrationOwner")
+  golfBookings          GolfBooking[]            @relation("GolfBookingOwner")
+  golfBookingsCreated   GolfBooking[]            @relation("GolfBookingCreator")
+  golfBookingsCancelled GolfBooking[]            @relation("GolfBookingCanceller")
+  golfBlocksCreated     GolfBlock[]              @relation("GolfBlockCreator")
+  tournamentsCreated    Tournament[]
+  walletMovements       WalletMovement[]         @relation("WalletOwner")
+  walletMovementsBy     WalletMovement[]         @relation("WalletActor")
+  approvedBy            User?                    @relation("Approver", fields: [approvedById], references: [id], onDelete: SetNull)
+  approvedUsers         User[]                   @relation("Approver")
+  createdBy             User?                    @relation("Creator", fields: [createdById], references: [id], onDelete: SetNull)
+  createdUsers          User[]                   @relation("Creator")
+
+  @@index([status])
+  @@index([role])
+  @@index([lastName, firstName])
+}
+
+model Session {
+  id         String    @id @default(uuid(7))
+  userId     String
+  /// SHA-256 del token. El token en claro solo existe en la cookie del socio.
+  tokenHash  String    @unique
+  expiresAt  DateTime
+  lastSeenAt DateTime  @default(now())
+  createdAt  DateTime  @default(now())
+  revokedAt  DateTime?
+  ip         String?
+  userAgent  String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model MagicLinkToken {
+  id         String    @id @default(uuid(7))
+  email      String
+  tokenHash  String    @unique
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+  requestIp  String?
+
+  @@index([email])
+  @@index([expiresAt])
+}
+
+/// Control de frecuencia persistente: sobrevive a los reinicios y funciona
+/// aunque haya varias instancias de la aplicacion.
+model RateLimitHit {
+  id        String   @id @default(uuid(7))
+  bucket    String
+  createdAt DateTime @default(now())
+
+  @@index([bucket, createdAt])
+}
+
+// ---------------------------------------------------------------- pistas
+
+model Court {
+  id               String   @id @default(uuid(7))
+  sport            Sport
+  name             String
+  code             String   @unique
+  surface          String?
+  isIndoor         Boolean  @default(false)
+  hasLighting      Boolean  @default(true)
+  /// Granularidad de la rejilla horaria, en minutos.
+  slotMinutes      Int      @default(30)
+  /// Duraciones reservables, en minutos.
+  allowedDurations Int[]    @default([60, 90])
+  maxPlayers       Int      @default(4)
+  isActive         Boolean  @default(true)
+  sortOrder        Int      @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  schedules  CourtSchedule[]
+  priceRules PriceRule[]
+  bookings   Booking[]
+  blocks     CourtBlock[]
+
+  @@index([sport, isActive])
+}
+
+/// Horario de apertura de una pista. Varias franjas por dia son validas.
+model CourtSchedule {
+  id       String  @id @default(uuid(7))
+  courtId  String
+  /// 0 = domingo … 6 = sabado (hora local del club).
+  weekday  Int
+  /// Minutos desde medianoche, hora local del club.
+  opensAt  Int
+  closesAt Int
+  isActive Boolean @default(true)
+
+  court Court @relation(fields: [courtId], references: [id], onDelete: Cascade)
+
+  @@index([courtId, weekday])
+}
+
+model PriceRule {
+  id           String       @id @default(uuid(7))
+  courtId      String?
+  sport        Sport?
+  memberType   MemberType?
+  /// Mascara de bits de dias: bit 0 = domingo … bit 6 = sabado. 127 = todos.
+  weekdayMask  Int          @default(127)
+  fromMinute   Int          @default(0)
+  toMinute     Int          @default(1440)
+  /// Precio por hora, en centimos.
+  priceCents   Int
+  taxTreatment TaxTreatment @default(EXEMPT_SPORT)
+  validFrom    DateTime?
+  validTo      DateTime?
+  priority     Int          @default(0)
+  label        String?
+  createdAt    DateTime     @default(now())
+
+  court Court? @relation(fields: [courtId], references: [id], onDelete: Cascade)
+
+  @@index([courtId])
+  @@index([sport])
+}
+
+// ---------------------------------------------------------------- reservas
+
+model Booking {
+  id            String        @id @default(uuid(7))
+  /// Referencia legible para el socio y para recepcion.
+  reference     String        @unique
+  courtId       String
+  userId        String
+  createdById   String
+  startsAt      DateTime      @db.Timestamptz(3)
+  endsAt        DateTime      @db.Timestamptz(3)
+  status        BookingStatus @default(CONFIRMED)
+  paymentStatus PaymentStatus @default(PENDING)
+  priceCents    Int           @default(0)
+  taxCents      Int           @default(0)
+  /// Congelado al reservar: la fiscalidad aplicada no cambia si cambian las tarifas.
+  taxTreatment  TaxTreatment  @default(EXEMPT_SPORT)
+  playerNames   String[]      @default([])
+  guestCount    Int           @default(0)
+  notes         String?
+  cancelledAt   DateTime?
+  cancelledById String?
+  cancelReason  String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  court           Court            @relation(fields: [courtId], references: [id], onDelete: Restrict)
+  user            User             @relation("BookingOwner", fields: [userId], references: [id], onDelete: Restrict)
+  createdBy       User             @relation("BookingCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  cancelledBy     User?            @relation("BookingCanceller", fields: [cancelledById], references: [id], onDelete: SetNull)
+  payment         Payment?
+  walletMovements WalletMovement[]
+
+  @@index([courtId, startsAt])
+  @@index([userId, startsAt])
+  @@index([startsAt])
+}
+
+/// Bloqueo de franja horaria. courtId nulo => todas las pistas del deporte;
+/// sport nulo ademas => el club entero.
+model CourtBlock {
+  id          String    @id @default(uuid(7))
+  courtId     String?
+  sport       Sport?
+  startsAt    DateTime  @db.Timestamptz(3)
+  endsAt      DateTime  @db.Timestamptz(3)
+  type        BlockType @default(EVENT)
+  title       String
+  description String?
+  /// Si es publico, el socio ve el motivo en la rejilla.
+  isPublic    Boolean   @default(true)
+  createdById String
+  createdAt   DateTime  @default(now())
+
+  court     Court? @relation(fields: [courtId], references: [id], onDelete: Cascade)
+  createdBy User   @relation(fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@index([startsAt, endsAt])
+  @@index([courtId, startsAt])
+}
+
+// ---------------------------------------------------------------- cobros
+
+model Payment {
+  id                    String        @id @default(uuid(7))
+  bookingId             String        @unique
+  method                PaymentMethod
+  amountCents           Int
+  currency              String        @default("EUR")
+  status                PaymentStatus @default(PAID)
+  paidAt                DateTime      @default(now())
+  reference             String?
+  /// Reservado para la fase 2. Ver §9 de las especificaciones.
+  stripePaymentIntentId String?       @unique
+  registeredById        String?
+  createdAt             DateTime      @default(now())
+
+  booking      Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  registeredBy User?   @relation(fields: [registeredById], references: [id], onDelete: SetNull)
+}
+
+// ---------------------------------------------------------------- monedero
+
+/// Asiento del monedero. Solo se inserta: el saldo de User es la suma de estos
+/// importes, y cada fila guarda el saldo resultante para poder auditarlo.
+model WalletMovement {
+  id                String             @id @default(uuid(7))
+  userId            String
+  type              WalletMovementType
+  /// Con signo: positivo entra, negativo sale.
+  amountCents       Int
+  balanceAfterCents Int
+  /// Como entro el dinero, en las recargas.
+  method            PaymentMethod?
+  bookingId         String?
+  concept           String
+  createdById       String?
+  createdAt         DateTime           @default(now())
+
+  user      User     @relation("WalletOwner", fields: [userId], references: [id], onDelete: Restrict)
+  createdBy User?    @relation("WalletActor", fields: [createdById], references: [id], onDelete: SetNull)
+  booking   Booking? @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+
+  /// Una reserva se paga con saldo una vez y se devuelve una vez, por muchos
+  /// reintentos o cancelaciones simultaneas que lleguen.
+  @@unique([bookingId, type])
+  @@index([userId, createdAt])
+}
+
+// ---------------------------------------------------------------- sistema
+
+/// Registro inmutable. La aplicacion solo inserta.
+model AuditLog {
+  id         String   @id @default(uuid(7))
+  actorId    String?
+  action     String
+  entityType String
+  entityId   String?
+  metadata   Json?
+  ip         String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+  @@index([entityType, entityId])
+  @@index([actorId])
+}
+
+/// Parametros del club editables por un administrador sin redesplegar.
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------- cuotas
+
+/// Cuota de socio. Es el otro cobro del club, junto al de pista, y el que
+/// justifica pedir el numero de cuenta en el alta.
+model MembershipFee {
+  id             String         @id @default(uuid(7))
+  userId         String
+  /// Periodo legible: "2026", "2026-T1", "2026-09".
+  period         String
+  concept        String
+  amountCents    Int
+  taxTreatment   TaxTreatment   @default(NOT_SUBJECT)
+  status         FeeStatus      @default(PENDING)
+  dueDate        DateTime       @db.Date
+  paidAt         DateTime?
+  method         PaymentMethod?
+  reference      String?
+  registeredById String?
+  notes          String?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  user         User  @relation("FeeOwner", fields: [userId], references: [id], onDelete: Restrict)
+  registeredBy User? @relation("FeeRegistrar", fields: [registeredById], references: [id], onDelete: SetNull)
+
+  @@unique([userId, period, concept])
+  @@index([userId, dueDate])
+  @@index([status, dueDate])
+}
+
+// ---------------------------------------------------------------- noticias
+
+/// Tablon de noticias y eventos del club, lo que el socio ve al entrar.
+model Post {
+  id          String       @id @default(uuid(7))
+  slug        String       @unique
+  title       String
+  excerpt     String?
+  body        String
+  category    PostCategory @default(NOTICIA)
+  /// Fecha del evento, cuando la categoria es EVENTO.
+  eventDate   DateTime?
+  /// Fijado arriba del tablon.
+  isPinned    Boolean      @default(false)
+  publishedAt DateTime?
+  authorId    String
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  author User @relation(fields: [authorId], references: [id], onDelete: Restrict)
+
+  @@index([publishedAt])
+  @@index([category, eventDate])
+}
+
+// ---------------------------------------------------------------- tarifas de cuota
+
+/// Importe de la cuota por categoria de socio y semestre. Las cuotas concretas
+/// de cada socio se generan a partir de esto, no a mano.
+model FeeRate {
+  id           String       @id @default(uuid(7))
+  memberType   MemberType   @unique
+  /// Importe de UN semestre, en centimos.
+  amountCents  Int
+  taxTreatment TaxTreatment @default(NOT_SUBJECT)
+  /// Si esta a false, a esa categoria no se le gira cuota (honorarios, empleados).
+  isBilled     Boolean      @default(true)
+  updatedAt    DateTime     @updatedAt
+}
+
+// ---------------------------------------------------------------- torneos
+
+model Tournament {
+  id                 String           @id @default(uuid(7))
+  slug               String           @unique
+  name               String
+  description        String?
+  sport              TournamentSport
+  startsAt           DateTime
+  endsAt             DateTime
+  /// Plazo de inscripcion.
+  opensAt            DateTime
+  closesAt           DateTime
+  /// Plazas totales. 0 = sin limite.
+  maxParticipants    Int              @default(0)
+  /// Si admite acompanantes que no son socios.
+  allowGuests        Boolean          @default(false)
+  memberPriceCents   Int              @default(0)
+  guestPriceCents    Int              @default(0)
+  /// El socio esta exento; el invitado no. Ver §9 de las especificaciones.
+  memberTaxTreatment TaxTreatment     @default(EXEMPT_SPORT)
+  guestTaxTreatment  TaxTreatment     @default(STANDARD_21)
+  status             TournamentStatus @default(DRAFT)
+  createdById        String
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  createdBy     User                     @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  registrations TournamentRegistration[]
+
+  @@index([status, startsAt])
+  @@index([sport])
+}
+
+/// Inscripcion a un torneo. Siempre la hace un socio, que puede inscribirse a
+/// si mismo o traer a un invitado si el torneo lo permite.
+model TournamentRegistration {
+  id              String             @id @default(uuid(7))
+  tournamentId    String
+  userId          String
+  /// Nombre del participante: el del socio, o el del invitado que trae.
+  participantName String
+  isGuest         Boolean            @default(false)
+  status          RegistrationStatus @default(REGISTERED)
+  amountCents     Int                @default(0)
+  taxCents        Int                @default(0)
+  taxTreatment    TaxTreatment       @default(EXEMPT_SPORT)
+  paymentStatus   PaymentStatus      @default(PENDING)
+  notes           String?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  tournament Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  user       User       @relation("RegistrationOwner", fields: [userId], references: [id], onDelete: Restrict)
+
+  /// Un socio no puede inscribirse dos veces con el mismo nombre al mismo torneo.
+  @@unique([tournamentId, userId, participantName])
+  @@index([tournamentId, status])
+  @@index([userId])
+}
+
+// ---------------------------------------------------------------- golf
+
+/// Golf no encaja en Court + Booking y por eso tiene modelo propio.
+///
+/// En padel, tenis y croquet se reserva una pista **en exclusiva** durante un
+/// intervalo, y lo que hay que impedir es que dos reservas se solapen: de ahi
+/// el constraint de exclusion sobre tstzrange.
+///
+/// En golf se reserva una **salida** (tee time): un instante concreto que
+/// varios socios comparten hasta completar el flight. Lo que hay que impedir
+/// no es el solape sino pasarse del aforo, que es un problema distinto y se
+/// resuelve con un contador atomico. Ver src/lib/golf/salidas.ts.
+model GolfCourse {
+  id   String         @id @default(uuid(7))
+  code String         @unique
+  name String
+  kind GolfCourseKind @default(RECORRIDO)
+
+  /// 9 o 18 en un recorrido; 0 en practicas y putting green.
+  holes              Int @default(18)
+  /// Minutos entre salidas consecutivas. El club suele usar 10.
+  teeIntervalMinutes Int @default(10)
+  /// Jugadores por salida (flight).
+  maxPlayers         Int @default(4)
+
+  // --- economia. Precio por jugador, no por salida. ---
+  memberPriceCents   Int          @default(0)
+  guestPriceCents    Int          @default(0)
+  memberTaxTreatment TaxTreatment @default(EXEMPT_SPORT)
+  guestTaxTreatment  TaxTreatment @default(STANDARD_21)
+  /// Alquiler de buggy, por unidad y salida.
+  buggyPriceCents    Int          @default(0)
+  buggiesAvailable   Boolean      @default(false)
+
+  isActive  Boolean  @default(true)
+  sortOrder Int      @default(0)
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  schedules GolfSchedule[]
+  teeTimes  GolfTeeTime[]
+  blocks    GolfBlock[]
+
+  @@index([isActive, sortOrder])
+}
+
+/// Horario de apertura del recorrido por dia de la semana.
+model GolfSchedule {
+  id       String  @id @default(uuid(7))
+  courseId String
+  /// 0 = domingo … 6 = sabado, hora local del club.
+  weekday  Int
+  /// Minutos desde medianoche, hora local del club.
+  opensAt  Int
+  closesAt Int
+  isActive Boolean @default(true)
+
+  course GolfCourse @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@index([courseId, weekday])
+}
+
+/// Una salida concreta. Se crea en el momento en que alguien la reserva: hasta
+/// entonces es solo un hueco calculado a partir del horario y del intervalo.
+model GolfTeeTime {
+  id       String   @id @default(uuid(7))
+  courseId String
+  startsAt DateTime @db.Timestamptz(3)
+
+  /// Jugadores ya apuntados. Es el contador que impide pasarse del aforo:
+  /// se actualiza en la misma sentencia que inserta la reserva.
+  playersBooked Int @default(0)
+
+  createdAt DateTime @default(now())
+
+  course   GolfCourse    @relation(fields: [courseId], references: [id], onDelete: Restrict)
+  bookings GolfBooking[]
+
+  /// Una sola fila por hueco: es lo que permite que el contador sea fiable.
+  @@unique([courseId, startsAt])
+  @@index([startsAt])
+}
+
+/// Lo que reserva un socio dentro de una salida. Varias de estas comparten
+/// salida hasta completar el flight.
+model GolfBooking {
+  id          String @id @default(uuid(7))
+  reference   String @unique
+  teeTimeId   String
+  userId      String
+  createdById String
+
+  /// Personas que entran en esta reserva, el titular incluido.
+  players    Int @default(1)
+  /// De esas personas, cuantas no son socios.
+  guestCount Int @default(0)
+  buggies    Int @default(0)
+
+  playerNames String[] @default([])
+
+  status        GolfBookingStatus @default(CONFIRMED)
+  paymentStatus PaymentStatus     @default(PENDING)
+  priceCents    Int               @default(0)
+  taxCents      Int               @default(0)
+  /// Congelado al reservar, como en las reservas de pista.
+  taxTreatment  TaxTreatment      @default(EXEMPT_SPORT)
+
+  notes         String?
+  cancelledAt   DateTime?
+  cancelledById String?
+  cancelReason  String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  invitedByBookingId String?
+  invitationPayment  GolfInvitationPayment?
+  invitedByBooking   GolfBooking?           @relation("GolfInvitation", fields: [invitedByBookingId], references: [id], onDelete: Restrict)
+  invitedBookings    GolfBooking[]          @relation("GolfInvitation")
+
+  payment     GolfPayment?
+  teeTime     GolfTeeTime  @relation(fields: [teeTimeId], references: [id], onDelete: Restrict)
+  user        User         @relation("GolfBookingOwner", fields: [userId], references: [id], onDelete: Restrict)
+  createdBy   User         @relation("GolfBookingCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  cancelledBy User?        @relation("GolfBookingCanceller", fields: [cancelledById], references: [id], onDelete: SetNull)
+
+  @@index([invitedByBookingId])
+  @@index([teeTimeId])
+  @@index([userId, createdAt])
+}
+
+/// Bloqueo de salidas por mantenimiento, competicion o evento privado.
+/// courseId nulo => todos los recorridos.
+model GolfBlock {
+  id          String    @id @default(uuid(7))
+  courseId    String?
+  startsAt    DateTime  @db.Timestamptz(3)
+  endsAt      DateTime  @db.Timestamptz(3)
+  type        BlockType @default(EVENT)
+  title       String
+  description String?
+  isPublic    Boolean   @default(true)
+  createdById String
+  createdAt   DateTime  @default(now())
+
+  course    GolfCourse? @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  createdBy User        @relation("GolfBlockCreator", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@index([startsAt, endsAt])
+  @@index([courseId, startsAt])
+}
+
+model GolfPayment {
+  id             String        @id @default(uuid(7))
+  bookingId      String        @unique
+  method         PaymentMethod
+  amountCents    Int
+  currency       String        @default("EUR")
+  paidAt         DateTime      @default(now())
+  registeredById String?
+
+  booking      GolfBooking @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+  registeredBy User?       @relation(fields: [registeredById], references: [id], onDelete: SetNull)
+}

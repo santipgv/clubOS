@@ -1,0 +1,91 @@
+@import "tailwindcss";
+
+/*
+ * Paleta de la marca blanca. Cada club elige dos colores en Ajustes y el
+ * layout raiz los publica como --club-marca y --club-acento en <html>; aqui se
+ * derivan las escalas mezclandolos con blanco y negro. El fondo es claro y
+ * neutro para que manden el contenido y las fotos.
+ *
+ * `static` obliga a emitir todas las variables aunque ninguna clase las use:
+ * los graficos del panel las leen desde estilos en linea.
+ */
+:root {
+  /* Valores de fabrica: los mismos que IDENTIDAD_DEFAULTS en lib/club.ts. */
+  --club-marca: #1f4e5f;
+  --club-acento: #f2c230;
+  color-scheme: light;
+}
+
+@theme static {
+  /* Color de marca del club. El 700 es el color elegido tal cual: botones. */
+  --color-marca-50: color-mix(in oklab, var(--club-marca) 5%, white);
+  --color-marca-100: color-mix(in oklab, var(--club-marca) 11%, white);
+  --color-marca-200: color-mix(in oklab, var(--club-marca) 24%, white);
+  --color-marca-300: color-mix(in oklab, var(--club-marca) 42%, white);
+  --color-marca-400: color-mix(in oklab, var(--club-marca) 62%, white);
+  --color-marca-500: color-mix(in oklab, var(--club-marca) 78%, white);
+  --color-marca-600: color-mix(in oklab, var(--club-marca) 90%, white);
+  --color-marca-700: var(--club-marca);
+  --color-marca-800: color-mix(in oklab, var(--club-marca) 80%, black);
+  --color-marca-900: color-mix(in oklab, var(--club-marca) 58%, black);
+
+  /* Acento del club. El 300 es el color elegido. Nunca texto sobre blanco. */
+  --color-acento-100: color-mix(in oklab, var(--club-acento) 18%, white);
+  --color-acento-200: color-mix(in oklab, var(--club-acento) 50%, white);
+  --color-acento-300: var(--club-acento);
+  --color-acento-400: color-mix(in oklab, var(--club-acento) 85%, black);
+  --color-acento-500: color-mix(in oklab, var(--club-acento) 66%, black);
+  --color-acento-600: color-mix(in oklab, var(--club-acento) 48%, black);
+
+  /* Granate fijo para acciones destructivas y avisos: no depende del club. */
+  --color-granate-300: #d99a92;
+  --color-granate-400: #b85c50;
+  --color-granate-500: #97392d;
+  --color-granate-600: #7a2a20;
+
+  /* Neutros: fondo claro, texto gris oscuro. */
+  --color-piedra-50: #fbfbfa;
+  --color-piedra-100: #f5f5f3;
+  --color-piedra-200: #e6e6e2;
+  --color-piedra-300: #d4d4cf;
+  --color-piedra-400: #a3a39c;
+  --color-piedra-500: #74746d;
+
+  --font-sans: var(--fuente-lato), ui-sans-serif, system-ui, sans-serif;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background-color: var(--color-piedra-100);
+  color: #333330;
+  font-family: var(--font-sans);
+  min-height: 100dvh;
+}
+
+/*
+ * Titulos en Lato ligera, mayusculas y con letra separada.
+ */
+.titulo-club {
+  font-weight: 300;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+/* Foco visible siempre: la accesibilidad del socio mayor depende de ello. */
+:where(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--color-marca-600);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

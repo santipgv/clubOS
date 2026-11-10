@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verificar:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: clubos_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports: ["5432:5432"]
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/clubos_test
+      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/clubos_test
+      AUTH_SECRET: clave-solo-para-integracion-continua-32-caracteres-minimo
+      ENCRYPTION_KEY: clave-solo-para-cifrado-de-integracion-continua
+      APP_URL: http://localhost:3000
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # Las pruebas de concurrencia necesitan el constraint de exclusion, que
+      # solo existe si se aplican las migraciones.
+      - run: npx prisma migrate deploy
+
+      # Next genera next-env.d.ts y los tipos de rutas antes de que tsc los use.
+      - run: npx next typegen
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      # Bloquea cualquier aviso alto o critico, tambien en dependencias de
+      # desarrollo. El de braces (GHSA-vfj7-8cjw-p6xm) que obligaba a usar
+      # --omit=dev ya no sale en la cadena de eslint-config-next 16.4.5.
+      - run: npm audit --audit-level=high
+
+      - run: npm run build
