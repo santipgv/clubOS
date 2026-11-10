@@ -1,0 +1,13 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "regions": [
+    "fra1"
+  ],
+  "buildCommand": "node scripts/migrar-en-produccion.mjs && next build",
+  "crons": [
+    {
+      "path": "/api/cron/cuotas",
+      "schedule": "0 3 1 1 *"
+    }
+  ]
+}
