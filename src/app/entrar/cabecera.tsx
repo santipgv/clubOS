@@ -1,6 +1,7 @@
 import { getIdentidad } from "@/lib/club";
 
-export async function Cabecera({ texto }: { texto: string }) {
+/** Sin `texto`, debajo del nombre va el lema que el club guarda en Ajustes. */
+export async function Cabecera({ texto }: { texto?: string }) {
   const club = await getIdentidad();
   return (
     <div className="mb-8 text-center">
@@ -9,7 +10,7 @@ export async function Cabecera({ texto }: { texto: string }) {
         <img src={club["club.logo"]} alt="" className="mx-auto mb-4 h-16 w-auto" />
       ) : null}
       <h1 className="text-4xl font-bold tracking-tight text-marca-900">{club["club.nombre"]}</h1>
-      <p className="mt-3 text-sm text-marca-600">{texto}</p>
+      <p className="mt-3 text-sm text-marca-600">{texto ?? club["club.lema"]}</p>
     </div>
   );
 }

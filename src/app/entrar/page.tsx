@@ -25,7 +25,7 @@ export default async function EntrarPage({
 
   return (
     <main className="mx-auto flex min-h-dvh max-w-md flex-col justify-center px-4 py-12">
-      <Cabecera texto="Reserva de pistas para los socios del club." />
+      <Cabecera />
 
       <FormularioAcceso mensajeError={error ? MENSAJES_ERROR[error] : undefined} />
 
